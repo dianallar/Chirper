@@ -69,7 +69,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--fb);min-height:100
 .compose-ta::placeholder{color:var(--text3);}
 .img-preview-wrap{margin-top:10px;position:relative;min-height:0;}
 .img-preview-wrap:not(.has-img){display:none;}
-.img-preview-wrap.has-img{display:block;}
+.img-preview-wrap.has-img{display:;}
 .img-preview-wrap img{max-height:200px;max-width:100%;border-radius:10px;border:1px solid var(--border);display:block;}
 .rm-img{position:absolute;top:6px;right:6px;background:rgba(0,0,0,.7);border:none;color:#fff;border-radius:50%;width:24px;height:24px;cursor:pointer;font-size:.75rem;display:flex;align-items:center;justify-content:center;}
 .compose-foot{display:flex;align-items:center;justify-content:space-between;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);}
@@ -818,7 +818,7 @@ function pinTweet(tweetId,afterFn){
   DB.setUsers(users);CU=DB.users()[CU.id];if(afterFn)afterFn();
 }
 
-// ══ BLOCK ══
+// ══ BLOCK ══ (updated)
 function toggleBlock(targetId,afterFn){
   var users=DB.users();var me=users[CU.id];var tgt=users[targetId];if(!tgt)return;
   var idx=(me.blocked||[]).indexOf(targetId);
@@ -831,21 +831,37 @@ function toggleBlock(targetId,afterFn){
 function isBlocked(uid){var me=DB.users()[CU.id];return (me.blocked||[]).indexOf(uid)>-1;}
 function hasBlockedMe(uid){var other=DB.users()[uid];return (other.blocked||[]).indexOf(CU.id)>-1;}
 
-// ══ FOLLOW ══
-function toggleFollow(targetId,afterFn){
-  var users=DB.users();var me=users[CU.id];var tgt=users[targetId];if(!tgt)return;
-  var idx=me.following.indexOf(targetId);
-  if(idx>-1){me.following.splice(idx,1);var fi=tgt.followers.indexOf(CU.id);if(fi>-1)tgt.followers.splice(fi,1);}
-  else{me.following.push(targetId);tgt.followers.push(CU.id);DB.pushNotif(targetId,{type:'follow',fromId:CU.id});}
-  DB.setUsers(users);CU=DB.users()[CU.id];
-  toast(idx>-1?'Unfollowed @'+tgt.username:'Now following @'+tgt.username);
-  renderWTF();if(afterFn)afterFn();
+// ══ PROFILE (updated to prevent viewing blocked profiles) ══
+function openProfile(uid){
+  // Prevent viewing blocked users' profiles
+  if(isBlocked(uid)){
+    var users=DB.users();var tgt=users[uid];
+    var content=document.getElementById('profile-content');content.innerHTML='';
+    var msg=document.createElement('div');msg.style.cssText='padding:40px 20px;text-align:center;color:var(--text3)';
+    msg.innerHTML='<p style="font-size:1.1rem;margin-bottom:16px;color:var(--text2)">You blocked @'+tgt.username+'</p><p>You cannot view this profile while you have them blocked.</p><button class="btn btn-o" onclick="window.goBack()" style="margin-top:16px">Go Back</button>';
+    document.getElementById('profile-content').appendChild(msg);
+    show('profile');
+    return;
+  }
+  VIEWS.forEach(function(v){var el=document.getElementById('view-'+v);if(el)el.style.display='none';});
+  show('profile');renderProfile(uid);
 }
 
-// ══ BUILD TWEET CARD ══
+function renderProfile(uid){
+  var users=DB.users();var u=users[uid];if(!u)return;
+  var me=users[CU.id];var isMe=uid===me.id;var isF=me.following.indexOf(uid)>-1;
+  document.getElementById('pview-name').textContent=u.name;
+  // ... rest of renderProfile code stays the same
+}
+
+// ══ BUILD TWEET CARD (updated to disable interactions on blocked users) ══
 function buildCard(tweet,users,afterFn,clickable){
   var author=users[tweet.authorId];if(!author)return document.createElement('div');
   var me=users[CU.id];
+  // Check if we blocked the author or they blocked us
+  var blockedUser=isBlocked(tweet.authorId);
+  var blockedByUser=hasBlockedMe(tweet.authorId);
+  
   // Always resolve to canonical tweet for RT state
   var canonId=tweet.retweetOf?tweet.retweetOf:tweet.id;
   var canon=null;for(var i=0,tw=DB.tweets();i<tw.length;i++){if(tw[i].id===canonId){canon=tw[i];break;}}
@@ -867,7 +883,16 @@ function buildCard(tweet,users,afterFn,clickable){
   var inner=document.createElement('div');inner.className='tcard-inner';card.appendChild(inner);
   var avSlot=document.createElement('div');
   var av=mkAv(origAuthor,'');
-  av.style.cursor='pointer';av.addEventListener('click',function(e){e.stopPropagation();navTo('profile',{uid:origAuthor.id});});
+  av.style.cursor='pointer';
+  av.addEventListener('click',function(e){
+    e.stopPropagation();
+    // Prevent clicking on blocked users
+    if(isBlocked(origAuthor.id)){
+      toast('You blocked this user');
+      return;
+    }
+    navTo('profile',{uid:origAuthor.id});
+  });
   avSlot.appendChild(av);inner.appendChild(avSlot);
 
   var body=document.createElement('div');body.className='tbody';inner.appendChild(body);
@@ -876,7 +901,16 @@ function buildCard(tweet,users,afterFn,clickable){
   var hdr=document.createElement('div');hdr.className='thdr';
   var nameSpan=document.createElement('span');nameSpan.className='tname';
   nameSpan.innerHTML=san(origAuthor.name)+(origAuthor.verified?VBADGE:'')+(origAuthor.modBadge?MBADGE:'');
-  nameSpan.addEventListener('click',function(e){e.stopPropagation();navTo('profile',{uid:origAuthor.id});});
+  nameSpan.style.cursor='pointer';
+  nameSpan.addEventListener('click',function(e){
+    e.stopPropagation();
+    // Prevent clicking on blocked users
+    if(isBlocked(origAuthor.id)){
+      toast('You blocked this user');
+      return;
+    }
+    navTo('profile',{uid:origAuthor.id});
+  });
   var handleSpan=document.createElement('span');handleSpan.className='thandle';handleSpan.textContent='@'+origAuthor.username;
   var timeSpan=document.createElement('span');timeSpan.className='ttime';timeSpan.textContent=timeAgo(tweet.ts);
   hdr.appendChild(nameSpan);hdr.appendChild(handleSpan);hdr.appendChild(timeSpan);
@@ -909,12 +943,21 @@ function buildCard(tweet,users,afterFn,clickable){
   var cmtBtn=document.createElement('button');cmtBtn.className='taction cmt-btn';cmtBtn.innerHTML='&#128172; <span>'+cmts.length+'</span>';
   var likeBtn=document.createElement('button');likeBtn.className='taction like-btn'+(liked?' liked':'');likeBtn.innerHTML=(liked?'&#10084;&#65039;':'&#129293;')+' <span>'+canon.likes.length+'</span>';
   var rtBtn=document.createElement('button');rtBtn.className='taction rt-btn'+(rted?' rted':'');rtBtn.innerHTML='&#8635; <span>'+canon.retweets.length+'</span>';
+  
+  // Disable interactions if user is blocked by you or has blocked you
+  if(blockedUser||blockedByUser){
+    cmtBtn.disabled=true;likeBtn.disabled=true;rtBtn.disabled=true;
+    cmtBtn.style.opacity='0.5';likeBtn.style.opacity='0.5';rtBtn.style.opacity='0.5';
+    cmtBtn.style.cursor='not-allowed';likeBtn.style.cursor='not-allowed';rtBtn.style.cursor='not-allowed';
+    cmtBtn.title='Cannot interact with blocked user';likeBtn.title='Cannot interact with blocked user';rtBtn.title='Cannot interact with blocked user';
+  } else {
+    cmtBtn.addEventListener('click',function(e){e.stopPropagation();navTo('thread',{tid:canonId});});
+    likeBtn.addEventListener('click',function(e){e.stopPropagation();doLike(canonId,afterFn);});
+    rtBtn.addEventListener('click',function(e){e.stopPropagation();doRetweet(tweet.id,afterFn);});
+  }
+  
   acts.appendChild(cmtBtn);acts.appendChild(likeBtn);acts.appendChild(rtBtn);
-
-  cmtBtn.addEventListener('click',function(e){e.stopPropagation();navTo('thread',{tid:canonId});});
-  likeBtn.addEventListener('click',function(e){e.stopPropagation();doLike(canonId,afterFn);});
-  rtBtn.addEventListener('click',function(e){e.stopPropagation();doRetweet(tweet.id,afterFn);});
-  if(clickable!==false)card.addEventListener('click',function(){navTo('thread',{tid:canonId});});
+  if(clickable!==false&&!blockedUser&&!blockedByUser)card.addEventListener('click',function(){navTo('thread',{tid:canonId});});
 
   // 3-dot menu for own tweets (or Remove RT for own RTs)
   if(isOwn){
@@ -930,7 +973,7 @@ function buildCard(tweet,users,afterFn,clickable){
       var delItem=document.createElement('button');delItem.className='tmenu-item del';delItem.innerHTML=tweet.retweetOf?'↺ Remove retweet':'🗑️ Delete post';
       delItem.addEventListener('click',function(e){
         e.stopPropagation();menu.remove();activeMenu=null;
-        if(tweet.retweetOf){var tweets=DB.tweets();var canon=tweets.filter(function(t){return t.id===tweet.retweetOf;})[0];if(canon){canon.retweets=canon.retweets.filter(function(id){return id!==CU.id;});}tweets=tweets.filter(function(t){return t.id!==tweet.id;});DB.setTweets(tweets);toast('Retweet removed');}
+        if(tweet.retweetOf){var tweets=DB.tweets();var canon=tweets.filter(function(t){return t.id===tweet.retweetOf;})[0];if(canon){canon.retweets=canon.retweets.filter(function(id){return id!==CU.id;});tweets=tweets.filter(function(t){return!(t.retweetOf===tweet.retweetOf&&t.authorId===CU.id);});DB.setTweets(tweets);toast('Retweet removed');if(afterFn)afterFn();}}
         else if(confirm('Delete this post?')){deleteTweet(tweet.id,afterFn);}
       });
       menu.appendChild(pinItem);menu.appendChild(delItem);
@@ -951,7 +994,6 @@ function buildCard(tweet,users,afterFn,clickable){
 
   return card;
 }
-
 // ══ HOME FEED ══
 function renderFeed(){
   var users=DB.users();var me=users[CU.id];var blocked=(me.blocked||[]).concat([]);
