@@ -113,12 +113,12 @@ body{background:var(--bg);color:var(--text);font-family:var(--fb);min-height:100
 .empty-feed{padding:60px 20px;text-align:center;color:var(--text3);}
 .empty-feed p:first-child{font-size:1.3rem;font-family:var(--fh);color:var(--text2);margin-bottom:6px;}
 /* PROFILE BANNER */
-.pbanner{height:140px;background:linear-gradient(135deg,#1a2a5e,#2d1b69);position:relative;overflow:hidden;cursor:pointer;}
+.pbanner{height:140px;background:linear-gradient(135deg,#1a2a5e,#2d1b69);position:relative;overflow:hidden;cursor:pointer;z-index:1;}
 .pbanner img{width:100%;height:100%;object-fit:cover;display:block;}
 .pbanner-edit{position:absolute;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .2s;font-size:1.5rem;}
 .pbanner:hover .pbanner-edit{opacity:1;}
-.pinfo{padding:16px 20px 0;}
-.pavrow{display:flex;justify-content:space-between;align-items:flex-end;margin-top:-46px;margin-bottom:12px;}
+.pinfo{padding:16px 20px 0;position:relative;z-index:2;}
+.pavrow{display:flex;justify-content:space-between;align-items:flex-end;margin-top:-46px;margin-bottom:12px;position:relative;z-index:3;}
 .pname{font-family:var(--fh);font-size:1.2rem;font-weight:700;display:flex;align-items:center;gap:6px;}
 .phandle{color:var(--text2);font-size:.9rem;margin-bottom:8px;}
 .pbio{font-size:.92rem;line-height:1.5;margin-bottom:12px;}
