@@ -168,6 +168,8 @@ body{background:var(--bg);color:var(--text);font-family:var(--fb);min-height:100
 .sbar:focus{border-color:var(--accent);}
 .sres-user{display:flex;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .1s;}
 .sres-user:hover{background:var(--surface2);}
+/* NOTIF BADGE */
+.notif-badge{background:var(--danger);color:#fff;border-radius:50%;font-size:.65rem;font-weight:700;min-width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;padding:0 4px;margin-left:auto;}
 /* NOTIFS */
 .nitem2{display:flex;align-items:flex-start;gap:12px;padding:14px 20px;border-bottom:1px solid var(--border);font-size:.92rem;cursor:pointer;transition:background .1s;}
 .nitem2:hover{background:var(--surface2);}
@@ -253,7 +255,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--fb);min-height:100
     <div class="slogo">🐦</div>
     <button class="nitem active" id="nav-home" onclick="navTo('home')"><span class="nico">🏠</span><span>Home</span></button>
     <button class="nitem" id="nav-search" onclick="navTo('search')"><span class="nico">🔍</span><span>Explore</span></button>
-    <button class="nitem" id="nav-notifs" onclick="navTo('notifs')"><span class="nico">🔔</span><span>Alerts</span></button>
+    <button class="nitem" id="nav-notifs" onclick="navTo('notifs')"><span class="nico">🔔</span><span>Alerts</span><span class="notif-badge" id="notif-badge" style="display:none"></span></button>
     <button class="nitem" id="nav-profile" onclick="navTo('profile-self')"><span class="nico">👤</span><span>Profile</span></button>
     <button class="nitem" id="nav-admin" onclick="navTo('admin')" style="display:none"><span class="nico">🛡️</span><span>Admin</span></button>
     <button class="nitem" id="nav-settings" onclick="navTo('settings')"><span class="nico">⚙️</span><span>Settings</span></button>
@@ -464,11 +466,11 @@ var DB = {
   notifs:function(uid){return DB.g('ch_nf_'+uid)||[];},
   pushNotif:function(uid,n){var a=DB.notifs(uid);a.unshift(Object.assign({id:uid_gen(),ts:Date.now()},n));DB.s('ch_nf_'+uid,a.slice(0,60));},
   session:function(){
-    var uid=sessionStorage.getItem('ch_sess');
+    var uid=localStorage.getItem('ch_sess');
     return uid||null;
   },
-  setSession:function(uid){sessionStorage.setItem('ch_sess',uid);},
-  clearSession:function(){sessionStorage.removeItem('ch_sess');}
+  setSession:function(uid){localStorage.setItem('ch_sess',uid);},
+  clearSession:function(){localStorage.removeItem('ch_sess');}
 };
 
 var CU = null; // current user
@@ -686,6 +688,8 @@ function launch(uid){
   document.getElementById('app').style.display='flex';
   document.getElementById('nav-admin').style.display=CU.username.toLowerCase()==='potus'?'':'none';
   refreshSidebar();navTo('home');
+  startPolling();
+  if(DB.mode==='firebase'){toast('Connected to Firebase backend.');}
 }
 function refreshSidebar(){
   var u=DB.users()[CU.id];if(!u)return;CU=u;
@@ -693,12 +697,14 @@ function refreshSidebar(){
   setAv(document.getElementById('cav'),u,'');
   document.getElementById('sname').textContent=u.name;
   document.getElementById('shandle').textContent='@'+u.username;
+  updateNotifBadge();
 }
 
 // ══ NAV ══
 var VIEWS=['home','search','notifs','profile','thread','hashtag','admin','settings'];
 window.navTo=function(view,data){
   data=data||{};
+  _currentView=view;_currentViewData=data;
   VIEWS.forEach(function(v){var el=document.getElementById('view-'+v);if(el)el.style.display='none';});
   document.querySelectorAll('.nitem').forEach(function(b){b.classList.remove('active');});
   if(view==='home'){
@@ -755,6 +761,7 @@ window.postTweet=function(){
     composeImg=null;document.getElementById('cimg-wrap').classList.remove('has-img');document.getElementById('cimg-el').src='';
     var users=DB.users();var me=users[CU.id];
     (me.followers||[]).forEach(function(fid){if(fid!==CU.id){var fu=users[fid];if(fu&&(fu.blocked||[]).indexOf(CU.id)===-1)DB.pushNotif(fid,{type:'post',fromId:CU.id,tweetId:newTweet.id});}});
+    updateNotifBadge();
     toast('Posted!');renderFeed();
   }
   if(composeImg){compressImageForStorage(composeImg,doPost);}else{doPost(null);}
@@ -766,7 +773,7 @@ function doLike(tweetId,afterFn){
   var tw=tweets.filter(function(t){return t.id===tweetId;})[0];if(!tw)return;
   var idx=tw.likes.indexOf(CU.id);
   if(idx>-1)tw.likes.splice(idx,1);
-  else{tw.likes.push(CU.id);if(tw.authorId!==CU.id)DB.pushNotif(tw.authorId,{type:'like',fromId:CU.id,tweetId:tweetId});}
+  else{tw.likes.push(CU.id);if(tw.authorId!==CU.id){DB.pushNotif(tw.authorId,{type:'like',fromId:CU.id,tweetId:tweetId});updateNotifBadge();}}
   DB.setTweets(tweets);if(afterFn)afterFn();
 }
 
@@ -794,10 +801,45 @@ function doRetweet(inputId,afterFn){
     if(!alreadyHasPost){
       canon.retweets.push(CU.id);
       tweets.unshift({id:uid_gen(),authorId:CU.id,text:canon.text,image:canon.image||null,ts:Date.now(),likes:[],retweets:[],retweetOf:canonId,retweetAuthorId:canon.authorId,pinned:false});
-      if(canon.authorId!==CU.id)DB.pushNotif(canon.authorId,{type:'retweet',fromId:CU.id,tweetId:canonId});
+      if(canon.authorId!==CU.id){DB.pushNotif(canon.authorId,{type:'retweet',fromId:CU.id,tweetId:canonId});updateNotifBadge();}
     }
   }
   DB.setTweets(tweets);if(afterFn)afterFn();
+}
+
+// ══ REAL-TIME POLLING ══
+var _pollTimer=null;
+var _lastPollHash='';
+var _currentView='home';
+var _currentViewData={};
+
+function startPolling(){
+  if(_pollTimer)clearInterval(_pollTimer);
+  _pollTimer=setInterval(async function(){
+    if(!DB.firebaseReady||!DB.fs)return;
+    try{
+      var snap=await DB.fs.collection('chirper').doc('state').get();
+      if(!snap.exists)return;
+      var remote=snap.data().payload||{};
+      // Quick hash: stringify tweets + users length to detect changes
+      var remoteHash=JSON.stringify({tw:(remote.ch_tweets||[]).length,us:Object.keys(remote.ch_users||{}).length,ts:(remote.ch_tweets||[])[0]&&(remote.ch_tweets||[])[0].ts});
+      if(remoteHash===_lastPollHash)return;
+      _lastPollHash=remoteHash;
+      // Merge remote into dbCache (don't overwrite session)
+      Object.keys(remote).forEach(function(k){dbCache[k]=remote[k];});
+      CU=DB.users()[CU.id]||CU;
+      refreshSidebar();
+      refreshCurrentView();
+    }catch(e){}
+  },5000);
+}
+
+function refreshCurrentView(){
+  if(_currentView==='home')renderFeed();
+  else if(_currentView==='notifs')renderNotifs();
+  else if(_currentView==='profile')renderProfile(_currentViewData.uid);
+  else if(_currentView==='thread')renderThread(_currentViewData.tid);
+  else if(_currentView==='hashtag')openHashtag(_currentViewData.tag);
 }
 
 // ══ DELETE ══
@@ -816,6 +858,24 @@ function pinTweet(tweetId,afterFn){
   var users=DB.users();var u=users[CU.id];
   u.pinnedTweet=u.pinnedTweet===tweetId?null:tweetId;
   DB.setUsers(users);CU=DB.users()[CU.id];if(afterFn)afterFn();
+}
+
+// ══ FOLLOW ══
+function toggleFollow(targetId,afterFn){
+  var users=DB.users();var me=users[CU.id];var tgt=users[targetId];if(!tgt||targetId===CU.id)return;
+  var idx=(me.following||[]).indexOf(targetId);
+  if(idx>-1){
+    me.following.splice(idx,1);
+    tgt.followers=(tgt.followers||[]).filter(function(id){return id!==CU.id;});
+  } else {
+    if(!me.following)me.following=[];me.following.push(targetId);
+    if(!tgt.followers)tgt.followers=[];tgt.followers.push(CU.id);
+    if(tgt.id!==CU.id)DB.pushNotif(tgt.id,{type:'follow',fromId:CU.id,tweetId:null});
+  }
+  users[CU.id]=me;users[targetId]=tgt;
+  DB.setUsers(users);CU=DB.users()[CU.id];
+  updateNotifBadge();
+  if(afterFn)afterFn();
 }
 
 // ══ BLOCK ══ (updated)
@@ -845,13 +905,6 @@ function openProfile(uid){
   }
   VIEWS.forEach(function(v){var el=document.getElementById('view-'+v);if(el)el.style.display='none';});
   show('profile');renderProfile(uid);
-}
-
-function renderProfile(uid){
-  var users=DB.users();var u=users[uid];if(!u)return;
-  var me=users[CU.id];var isMe=uid===me.id;var isF=me.following.indexOf(uid)>-1;
-  document.getElementById('pview-name').textContent=u.name;
-  // ... rest of renderProfile code stays the same
 }
 
 // ══ BUILD TWEET CARD (updated to disable interactions on blocked users) ══
@@ -1141,6 +1194,26 @@ function renderThread(tid){
     body.appendChild(ctxt);
     body.querySelector('.tname').addEventListener('click',function(){navTo('profile',{uid:cu.id});});
 
+    // Like button for replies
+    var cmtLiked=(cmt.likes||[]).indexOf(CU.id)>-1;
+    var cmtLikeBtn=document.createElement('button');
+    cmtLikeBtn.className='taction like-btn'+(cmtLiked?' liked':'');
+    cmtLikeBtn.style.cssText='font-size:.8rem;padding:2px 6px;margin-bottom:4px;';
+    cmtLikeBtn.innerHTML=(cmtLiked?'&#10084;&#65039;':'&#129293;')+' <span>'+(cmt.likes||[]).length+'</span>';
+    cmtLikeBtn.addEventListener('click',function(e){
+      e.stopPropagation();
+      var allC=DB.comments(canonId);
+      var ci=allC.findIndex(function(c){return c.id===cmt.id;});
+      if(ci===-1)return;
+      if(!allC[ci].likes)allC[ci].likes=[];
+      var li=allC[ci].likes.indexOf(CU.id);
+      if(li>-1){allC[ci].likes.splice(li,1);}
+      else{allC[ci].likes.push(CU.id);if(allC[ci].authorId!==CU.id)DB.pushNotif(allC[ci].authorId,{type:'like',fromId:CU.id,tweetId:canonId});updateNotifBadge();}
+      DB.s('ch_cmts_'+canonId,allC);
+      renderThread(tid);
+    });
+    body.appendChild(cmtLikeBtn);
+
     // Reply toggle button
     var children=allCmts.filter(function(c){return c.parentId===cmt.id;});
     var rtoggle=document.createElement('button');rtoggle.className='creply-toggle';
@@ -1315,8 +1388,20 @@ window.doSearch=function(){
 };
 
 // ══ NOTIFICATIONS ══
+function updateNotifBadge(){
+  var notifs=DB.notifs(CU.id);
+  var unread=(notifs||[]).filter(function(n){return !n.read;}).length;
+  var badge=document.getElementById('notif-badge');
+  if(!badge)return;
+  if(unread>0){badge.textContent=unread>99?'99+':String(unread);badge.style.display='';}
+  else{badge.style.display='none';}
+}
 function renderNotifs(){
   var notifs=DB.notifs(CU.id);var users=DB.users();var el=document.getElementById('notifs-list');el.innerHTML='';
+  // Mark all as read
+  var updated=notifs.map(function(n){return Object.assign({},n,{read:true});});
+  DB.s('ch_nf_'+CU.id,updated);
+  updateNotifBadge();
   if(!notifs.length){el.innerHTML='<div class="empty-feed"><p>Nothing yet</p><p>Likes, follows, retweets and replies appear here.</p></div>';return;}
   notifs.forEach(function(n){
     var from=users[n.fromId];if(!from)return;
@@ -1396,7 +1481,6 @@ async function initApp(){
   var sess=DB.session();
   if(sess&&DB.users()[sess])launch(sess);
   else document.getElementById('auth-screen').style.display='flex';
-  if(DB.mode==='firebase'){toast('Connected to Firebase backend.');}
 }
 initApp();
 </script>
