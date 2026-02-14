@@ -374,35 +374,100 @@ body{background:var(--bg);color:var(--text);font-family:var(--fb);min-height:100
   </div>
 </div>
 
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="./firebase-config.js"></script>
+
 <script>
 // ══ DATA ══
 var MAX_TWEETS_STORED = 400; // cap to avoid quota
+// Optional Firebase config: set window.CHIRPER_FIREBASE in firebase-config.js.
+var FIREBASE_CONF = window.CHIRPER_FIREBASE || null;
+var dbCache = {};
+var remoteSaveTimer = null;
 var DB = {
-  g:function(k){try{return JSON.parse(localStorage.getItem(k));}catch(e){return null;}},
-  s:function(k,v){localStorage.setItem(k,JSON.stringify(v));},
-  d:function(k){localStorage.removeItem(k);},
+  mode:'local',
+  firebaseReady:false,
+  fs:null,
+  init:async function(){
+    var localCache = DB._loadLocalCache();
+    dbCache = localCache;
+    if(!FIREBASE_CONF||!window.firebase){return;}
+    try{
+      var app=firebase.apps.length?firebase.app():firebase.initializeApp(FIREBASE_CONF);
+      DB.fs=app.firestore();
+      DB.firebaseReady=true;
+      DB.mode='firebase';
+      var snap=await DB.fs.collection('chirper').doc('state').get();
+      if(snap.exists){
+        dbCache=snap.data().payload||{};
+      } else if(Object.keys(localCache).length){
+        dbCache=localCache;
+        await DB.fs.collection('chirper').doc('state').set({payload:dbCache,updatedAt:Date.now()});
+      } else {
+        dbCache={};
+      }
+      DB._clearLocalCache();
+    }catch(e){
+      console.warn('Firebase init failed, using local storage.',e);
+      DB.mode='local';
+      DB.firebaseReady=false;
+      dbCache=localCache;
+    }
+  },
+  _loadLocalCache:function(){
+    var out={};
+    for(var i=0;i<localStorage.length;i++){
+      var k=localStorage.key(i);
+      if(!k||k.indexOf('ch_')!==0)continue;
+      try{out[k]=JSON.parse(localStorage.getItem(k));}catch(e){out[k]=null;}
+    }
+    return out;
+  },
+  _clearLocalCache:function(){
+    var keys=[];
+    for(var i=0;i<localStorage.length;i++){
+      var k=localStorage.key(i);
+      if(k&&k.indexOf('ch_')===0)keys.push(k);
+    }
+    keys.forEach(function(k){localStorage.removeItem(k);});
+  },
+  _queueRemoteSave:function(){
+    if(!DB.firebaseReady||!DB.fs)return;
+    clearTimeout(remoteSaveTimer);
+    remoteSaveTimer=setTimeout(async function(){
+      try{await DB.fs.collection('chirper').doc('state').set({payload:dbCache,updatedAt:Date.now()});}
+      catch(e){console.warn('Firebase save failed.',e);}
+    },250);
+  },
+  g:function(k){return Object.prototype.hasOwnProperty.call(dbCache,k)?dbCache[k]:null;},
+  s:function(k,v){
+    dbCache[k]=v;
+    if(DB.mode==='local'){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}}
+    DB._queueRemoteSave();
+  },
+  d:function(k){
+    delete dbCache[k];
+    if(DB.mode==='local'){localStorage.removeItem(k);}
+    DB._queueRemoteSave();
+  },
   users:function(){return DB.g('ch_users')||{};},
   setUsers:function(u){DB.s('ch_users',u);},
   tweets:function(){return DB.g('ch_tweets')||[];},
   setTweets:function(t){
     if(t.length>MAX_TWEETS_STORED){t=t.slice(0,MAX_TWEETS_STORED);}
-    function save(arr){
-      try{DB.s('ch_tweets',arr);return true;}catch(e){return false;}
-    }
-    if(!save(t)){
-      var trimmed=t.slice(0,Math.floor(t.length/2));
-      trimmed.forEach(function(tw){if(tw.image)tw.image=null;}); // drop images from oldest half
-      if(!save(trimmed)){trimmed=t.slice(0,100);trimmed.forEach(function(tw){if(tw.image)tw.image=null;});save(trimmed);}
-      if(typeof toast==='function')toast('Storage full: older posts were trimmed.');
-    }
+    DB.s('ch_tweets',t);
   },
   comments:function(tid){return DB.g('ch_cmts_'+tid)||[];},
   addComment:function(tid,c){var a=DB.comments(tid);a.push(c);DB.s('ch_cmts_'+tid,a);},
   notifs:function(uid){return DB.g('ch_nf_'+uid)||[];},
   pushNotif:function(uid,n){var a=DB.notifs(uid);a.unshift(Object.assign({id:uid_gen(),ts:Date.now()},n));DB.s('ch_nf_'+uid,a.slice(0,60));},
-  session:function(){return DB.g('ch_sess');},
-  setSession:function(uid){DB.s('ch_sess',uid);},
-  clearSession:function(){DB.d('ch_sess');}
+  session:function(){
+    var uid=sessionStorage.getItem('ch_sess');
+    return uid||null;
+  },
+  setSession:function(uid){sessionStorage.setItem('ch_sess',uid);},
+  clearSession:function(){sessionStorage.removeItem('ch_sess');}
 };
 
 var CU = null; // current user
@@ -1145,13 +1210,13 @@ function renderProfile(uid){
   var tabs=document.createElement('div');tabs.className='ptabs';
   var t1=document.createElement('div');t1.className='ptab active';t1.textContent='Posts';
   var t2=document.createElement('div');t2.className='ptab';t2.textContent='Retweets';
-  tabs.appendChild(t1);tabs.appendChild(t2);content.appendChild(tabs);
+  var t3=document.createElement('div');t3.className='ptab';t3.textContent='Likes';
+  tabs.appendChild(t1);tabs.appendChild(t2);tabs.appendChild(t3);content.appendChild(tabs);
 
   var pf=document.createElement('div');content.appendChild(pf);
-  var currentTab='posts';
 
   function showPosts(){
-    currentTab='posts';t1.className='ptab active';t2.className='ptab';pf.innerHTML='';
+    t1.className='ptab active';t2.className='ptab';t3.className='ptab';pf.innerHTML='';
     // Show pinned first if any
     var pinned=u.pinnedTweet?posts.filter(function(t){return t.id===u.pinnedTweet;})[0]:null;
     if(pinned){var pc=buildCard(Object.assign({},pinned,{pinned:true}),users,function(){renderProfile(uid);},true);pf.appendChild(pc);}
@@ -1160,11 +1225,17 @@ function renderProfile(uid){
     rest.forEach(function(t){pf.appendChild(buildCard(t,users,function(){renderProfile(uid);},true));});
   }
   function showRts(){
-    currentTab='rts';t1.className='ptab';t2.className='ptab active';pf.innerHTML='';
+    t1.className='ptab';t2.className='ptab active';t3.className='ptab';pf.innerHTML='';
     if(!rts.length){pf.innerHTML='<div class="empty-feed"><p>No retweets yet</p></div>';return;}
     rts.forEach(function(t){pf.appendChild(buildCard(t,users,function(){renderProfile(uid);},true));});
   }
-  t1.addEventListener('click',showPosts);t2.addEventListener('click',showRts);
+  function showLikes(){
+    t1.className='ptab';t2.className='ptab';t3.className='ptab active';pf.innerHTML='';
+    var liked=allTweets.filter(function(t){return (t.likes||[]).indexOf(uid)>-1&&!t.retweetOf;}).sort(function(a,b){return b.ts-a.ts;});
+    if(!liked.length){pf.innerHTML='<div class="empty-feed"><p>No liked posts yet</p></div>';return;}
+    liked.forEach(function(t){pf.appendChild(buildCard(t,users,function(){renderProfile(uid);},true));});
+  }
+  t1.addEventListener('click',showPosts);t2.addEventListener('click',showRts);t3.addEventListener('click',showLikes);
   showPosts();
 }
 
@@ -1275,10 +1346,16 @@ function seed(){
 }
 
 // ══ INIT ══
-seed();wireInputs();
-var sess=DB.session();
-if(sess&&DB.users()[sess])launch(sess);
-else document.getElementById('auth-screen').style.display='flex';
+async function initApp(){
+  await DB.init();
+  seed();
+  wireInputs();
+  var sess=DB.session();
+  if(sess&&DB.users()[sess])launch(sess);
+  else document.getElementById('auth-screen').style.display='flex';
+  if(DB.mode==='firebase'){toast('Connected to Firebase backend.');}
+}
+initApp();
 </script>
 </body>
 </html>
