@@ -195,6 +195,12 @@ body{background:var(--bg);color:var(--text);font-family:var(--fb);min-height:100
 .htag-header strong{color:var(--text);font-family:var(--fh);}
 /* ADMIN */
 .admin-row{display:flex;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid var(--border);}
+/* BAN */
+.banned-screen{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;background:radial-gradient(ellipse at 50% 40%,#2a0a0a,var(--bg) 70%);text-align:center;padding:40px;}
+.banned-screen h1{font-family:var(--fh);font-size:2.2rem;font-weight:800;color:var(--danger);margin-bottom:12px;}
+.banned-screen p{color:var(--text2);font-size:1rem;line-height:1.6;max-width:400px;}
+.ban-badge{display:inline-flex;align-items:center;gap:4px;background:rgba(232,85,85,.15);border:1px solid var(--danger);color:var(--danger);border-radius:20px;padding:2px 10px;font-size:.75rem;font-weight:600;}
+.ban-reason-pill{background:rgba(232,85,85,.1);border:1px solid rgba(232,85,85,.3);border-radius:8px;padding:8px 12px;font-size:.82rem;color:var(--text2);margin-top:6px;}
 /* VERIFIED BADGE */
 .vbadge{width:16px;height:16px;vertical-align:middle;flex-shrink:0;display:inline-block;object-fit:contain;}
 .vbadge-lg{width:20px;height:20px;vertical-align:middle;display:inline-block;object-fit:contain;}
@@ -258,6 +264,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--fb);min-height:100
     <button class="nitem" id="nav-notifs" onclick="navTo('notifs')"><span class="nico">🔔</span><span>Alerts</span><span class="notif-badge" id="notif-badge" style="display:none"></span></button>
     <button class="nitem" id="nav-profile" onclick="navTo('profile-self')"><span class="nico">👤</span><span>Profile</span></button>
     <button class="nitem" id="nav-admin" onclick="navTo('admin')" style="display:none"><span class="nico">🛡️</span><span>Admin</span></button>
+    <button class="nitem" id="nav-modpanel" onclick="navTo('modpanel')" style="display:none"><span class="nico">🔨</span><span>Mod Panel</span></button>
     <button class="nitem" id="nav-settings" onclick="navTo('settings')"><span class="nico">⚙️</span><span>Settings</span></button>
     <div class="suser" onclick="navTo('profile-self')">
       <div class="av sm" id="sav"></div>
@@ -321,6 +328,12 @@ body{background:var(--bg);color:var(--text);font-family:var(--fb);min-height:100
       <div style="padding:12px 20px;border-bottom:1px solid var(--border);font-size:.85rem;color:var(--text2)">Manage verified checkmarks. Only accessible to @POTUS.</div>
       <div id="admin-list"></div>
     </div>
+    <!-- MOD PANEL -->
+    <div id="view-modpanel" style="display:none">
+      <div class="col-hdr"><h2>🔨 Mod Panel</h2></div>
+      <div style="padding:12px 20px;border-bottom:1px solid var(--border);font-size:.85rem;color:var(--text2)">Ban and unban users. Accessible to moderators and @POTUS.</div>
+      <div id="modpanel-list"></div>
+    </div>
     <!-- SETTINGS -->
     <div id="view-settings" style="display:none">
       <div class="col-hdr"><h2>Settings</h2></div>
@@ -363,6 +376,22 @@ body{background:var(--bg);color:var(--text);font-family:var(--fb);min-height:100
 
 <div id="toast"></div>
 <div id="lbox" onclick="this.classList.remove('open')"><img id="lbox-img" src="" alt=""/></div>
+
+<!-- BAN MODAL -->
+<div id="ban-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:300;align-items:center;justify-content:center;">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:28px;width:400px;max-width:95vw;display:flex;flex-direction:column;gap:16px;">
+    <h3 style="font-family:var(--fh);font-size:1.1rem;font-weight:700;color:var(--danger)">🔨 Ban User</h3>
+    <p style="font-size:.88rem;color:var(--text2)">Banning <strong id="ban-modal-name" style="color:var(--text)"></strong>. They will be unable to log in or interact.</p>
+    <div class="fg" style="margin-bottom:0">
+      <label>Reason <span style="text-transform:none;font-weight:400;font-size:.75rem">(shown to user)</span></label>
+      <input type="text" id="ban-reason-inp" placeholder="e.g. Violation of state decree…" maxlength="200"/>
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end">
+      <button class="btn btn-o btn-s" onclick="document.getElementById('ban-modal').style.display='none'">Cancel</button>
+      <button class="btn btn-danger btn-s" style="width:auto" onclick="confirmBan()">Confirm Ban</button>
+    </div>
+  </div>
+</div>
 
 <!-- CROP MODAL -->
 <div id="crop-modal">
@@ -658,6 +687,7 @@ window.doLogin=function(){
   var err=document.getElementById('lerr');
   var found=null;Object.values(DB.users()).forEach(function(u){if(u.username.toLowerCase()===un.toLowerCase())found=u;});
   if(!found||found.password!==pw){err.textContent='Invalid username or password.';return;}
+  if(found.banned){err.textContent='This account has been suspended.';return;}
   err.textContent='';DB.setSession(found.id);launch(found.id);
 };
 window.doRegister=function(){
@@ -684,9 +714,14 @@ window.doLogout=function(){DB.clearSession();location.reload();};
 // ══ LAUNCH ══
 function launch(uid){
   var users=DB.users();CU=users[uid];
+  // Check if banned
+  if(CU.banned){showBannedScreen(CU);return;}
   document.getElementById('auth-screen').style.display='none';
   document.getElementById('app').style.display='flex';
-  document.getElementById('nav-admin').style.display=CU.username.toLowerCase()==='potus'?'':'none';
+  var isPotus=CU.username.toLowerCase()==='potus';
+  var isMod=CU.modBadge||CU.role==='mod';
+  document.getElementById('nav-admin').style.display=isPotus?'':'none';
+  document.getElementById('nav-modpanel').style.display=(isPotus||isMod)?'':'none';
   refreshSidebar();navTo('home');
   startPolling();
   if(DB.mode==='firebase'){toast('Connected to Firebase backend.');}
@@ -701,7 +736,7 @@ function refreshSidebar(){
 }
 
 // ══ NAV ══
-var VIEWS=['home','search','notifs','profile','thread','hashtag','admin','settings'];
+var VIEWS=['home','search','notifs','profile','thread','hashtag','admin','modpanel','settings'];
 window.navTo=function(view,data){
   data=data||{};
   _currentView=view;_currentViewData=data;
@@ -725,6 +760,8 @@ window.navTo=function(view,data){
     navHistory.push({v:'hashtag',tag:data.tag});openHashtag(data.tag);
   } else if(view==='admin'){
     show('admin');act('nav-admin');renderAdmin();
+  } else if(view==='modpanel'){
+    show('modpanel');act('nav-modpanel');renderModPanel();
   } else if(view==='settings'){
     show('settings');act('nav-settings');
     var u=DB.users()[CU.id];
@@ -840,6 +877,8 @@ function refreshCurrentView(){
   else if(_currentView==='profile')renderProfile(_currentViewData.uid);
   else if(_currentView==='thread')renderThread(_currentViewData.tid);
   else if(_currentView==='hashtag')openHashtag(_currentViewData.tag);
+  else if(_currentView==='modpanel')renderModPanel();
+  else if(_currentView==='admin')renderAdmin();
 }
 
 // ══ DELETE ══
@@ -1033,15 +1072,34 @@ function buildCard(tweet,users,afterFn,clickable){
       card.appendChild(menu);activeMenu=menu;
     });
   }
-  // Mod: Add community note (on any tweet)
+  // Mod: Add community note (on any tweet) + quick ban
   if((me.modBadge||me.role==='mod')&&!isOwn){
     var noteBtn=document.createElement('button');noteBtn.className='tmenu-btn';noteBtn.textContent='📝';noteBtn.title='Add community note';noteBtn.style.top='14px';noteBtn.style.right='36px';
     card.appendChild(noteBtn);
     noteBtn.addEventListener('click',function(e){e.stopPropagation();
-      var text=prompt('Community note (visible to all):');
-      if(!text||!text.trim())return;
-      var tweets=DB.tweets();var tw=null;for(var i=0;i<tweets.length;i++)if(tweets[i].id===canonId){tw=tweets[i];break;}
-      if(tw){if(!tw.communityNotes)tw.communityNotes=[];tw.communityNotes.push({modId:CU.id,modName:CU.name,text:text.trim(),ts:Date.now()});DB.setTweets(tweets);toast('Note added');if(afterFn)afterFn();}
+      if(activeMenu){activeMenu.remove();activeMenu=null;}
+      var menu=document.createElement('div');menu.className='tmenu';
+      var noteItem=document.createElement('button');noteItem.className='tmenu-item';noteItem.innerHTML='📝 Add community note';
+      noteItem.addEventListener('click',function(e){e.stopPropagation();menu.remove();activeMenu=null;
+        var text=prompt('Community note (visible to all):');
+        if(!text||!text.trim())return;
+        var tweets=DB.tweets();var tw=null;for(var i=0;i<tweets.length;i++)if(tweets[i].id===canonId){tw=tweets[i];break;}
+        if(tw){if(!tw.communityNotes)tw.communityNotes=[];tw.communityNotes.push({modId:CU.id,modName:CU.name,text:text.trim(),ts:Date.now()});DB.setTweets(tweets);toast('Note added');if(afterFn)afterFn();}
+      });
+      var usrs=DB.users();var tgtUser=usrs[origAuthor.id];
+      var banItem=document.createElement('button');banItem.className='tmenu-item del';
+      banItem.innerHTML=tgtUser&&tgtUser.banned?'✅ Unban @'+san(origAuthor.username):'🔨 Ban @'+san(origAuthor.username);
+      banItem.addEventListener('click',function(e){e.stopPropagation();menu.remove();activeMenu=null;
+        var fresh=DB.users();var tgt=fresh[origAuthor.id];if(!tgt)return;
+        if(tgt.banned){unbanUser(origAuthor.id);if(afterFn)afterFn();}
+        else{openBanModal(origAuthor.id);}
+      });
+      menu.appendChild(noteItem);
+      var isPotus=CU.username.toLowerCase()==='potus';
+      var tgt2=DB.users()[origAuthor.id];
+      var canBan=isPotus||(!(tgt2&&(tgt2.modBadge||tgt2.role==='mod'))&&origAuthor.username.toLowerCase()!=='potus');
+      if(canBan)menu.appendChild(banItem);
+      card.appendChild(menu);activeMenu=menu;
     });
   }
 
@@ -1053,6 +1111,7 @@ function renderFeed(){
   var allVisible=DB.tweets().filter(function(t){
     var aid=t.retweetOf?t.retweetAuthorId:t.authorId;
     if(blocked.indexOf(aid)>-1||hasBlockedMe(aid))return false;
+    var tAuthor=users[aid];if(tAuthor&&tAuthor.banned)return false; // hide banned users' posts
     return t.authorId===me.id||me.following.indexOf(t.authorId)>-1;
   });
   allVisible.sort(function(a,b){return b.ts-a.ts;});
@@ -1140,10 +1199,10 @@ function renderThread(tid){
   var container=document.getElementById('thread-content');container.innerHTML='';
   container.appendChild(buildCard(canon,users,function(){renderThread(tid);},false));
 
-  // Mod: Add community note (thread view)
+  // Mod: Add community note (thread view) + ban
   var me=DB.users()[CU.id];
   if((me.modBadge||me.role==='mod')&&canon.authorId!==CU.id){
-    var noteDiv=document.createElement('div');noteDiv.style.cssText='padding:8px 20px 12px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;';
+    var noteDiv=document.createElement('div');noteDiv.style.cssText='padding:8px 20px 12px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;flex-wrap:wrap;';
     var noteInp=document.createElement('input');noteInp.placeholder='Add a community note…';noteInp.style.flex='1';noteInp.className='sbar';noteInp.style.padding='8px 12px';
     var noteSb=document.createElement('button');noteSb.className='btn btn-p btn-s';noteSb.textContent='Add note';
     noteSb.addEventListener('click',function(){
@@ -1151,6 +1210,21 @@ function renderThread(tid){
       var tweets=DB.tweets();var tw=null;for(var i=0;i<tweets.length;i++)if(tweets[i].id===canonId){tw=tweets[i];break;}
       if(tw){if(!tw.communityNotes)tw.communityNotes=[];tw.communityNotes.push({modId:CU.id,modName:CU.name,text:text,ts:Date.now()});DB.setTweets(tweets);noteInp.value='';toast('Note added');renderThread(tid);}
     });
+    var tgtUser2=DB.users()[canon.authorId];
+    var isPotus2=CU.username.toLowerCase()==='potus';
+    var canBanThread=isPotus2||(!(tgtUser2&&(tgtUser2.modBadge||tgtUser2.role==='mod'))&&canon.authorId.toLowerCase()!=='potus1');
+    if(canBanThread){
+      var threadBanBtn=document.createElement('button');
+      threadBanBtn.className='btn btn-s '+(tgtUser2&&tgtUser2.banned?'btn-o':'btn-danger');
+      threadBanBtn.style.width='auto';
+      threadBanBtn.textContent=tgtUser2&&tgtUser2.banned?'Unban User':'🔨 Ban User';
+      threadBanBtn.addEventListener('click',function(){
+        var fresh=DB.users();var tu=fresh[canon.authorId];if(!tu)return;
+        if(tu.banned){unbanUser(canon.authorId);renderThread(tid);}
+        else{openBanModal(canon.authorId);}
+      });
+      noteDiv.appendChild(threadBanBtn);
+    }
     noteDiv.appendChild(noteInp);noteDiv.appendChild(noteSb);container.appendChild(noteDiv);
   }
 
@@ -1312,10 +1386,27 @@ function renderProfile(uid){
     blockBtn.addEventListener('click',function(){toggleBlock(uid,function(){renderProfile(uid);});});
     var fBtn=document.createElement('button');fBtn.className='btn btn-s '+(isF?'btn-fg':'btn-f');fBtn.textContent=isF?'Following':'Follow';fBtn.style.marginLeft='auto';
     fBtn.addEventListener('click',function(){toggleFollow(uid,function(){renderProfile(uid);});});avRow.appendChild(fBtn);avRow.appendChild(blockBtn);
+    // Mod/POTUS ban button on profile
+    var isPotus=CU.username.toLowerCase()==='potus';
+    var isMod2=CU.modBadge||CU.role==='mod';
+    var canBanFromProfile=(isPotus||(isMod2&&u.role!=='mod'&&!u.modBadge))&&u.username.toLowerCase()!=='potus';
+    if(canBanFromProfile){
+      var profileBanBtn=document.createElement('button');
+      profileBanBtn.className='btn btn-s '+(u.banned?'btn-o':'btn-danger');
+      profileBanBtn.style.marginLeft='8px';
+      profileBanBtn.textContent=u.banned?'Unban':'🔨 Ban';
+      profileBanBtn.addEventListener('click',function(){
+        if(u.banned){unbanUser(uid);renderProfile(uid);}
+        else{openBanModal(uid);}
+      });
+      avRow.appendChild(profileBanBtn);
+    }
   }
   info.appendChild(avRow);
 
-  var nameEl=document.createElement('div');nameEl.className='pname';nameEl.innerHTML=san(u.name)+(u.verified?VBADGE_LG:'')+(u.modBadge?MBADGE:'');info.appendChild(nameEl);
+  var nameEl=document.createElement('div');nameEl.className='pname';
+  nameEl.innerHTML=san(u.name)+(u.verified?VBADGE_LG:'')+(u.modBadge?MBADGE:'')+(u.banned?'<span class="ban-badge" style="font-size:.8rem;padding:3px 10px">🔨 Banned</span>':'');
+  info.appendChild(nameEl);
   var handleEl=document.createElement('div');handleEl.className='phandle';handleEl.textContent='@'+u.username;info.appendChild(handleEl);
   if(u.bio){var bioEl=document.createElement('div');bioEl.className='pbio';bioEl.textContent=u.bio;info.appendChild(bioEl);}
   var stats=document.createElement('div');stats.className='pstats';
@@ -1415,6 +1506,110 @@ function renderNotifs(){
   });
 }
 
+// ══ BAN SYSTEM ══
+var _banTargetId = null;
+
+function showBannedScreen(u){
+  document.getElementById('auth-screen').style.display='none';
+  var app=document.getElementById('app');app.style.display='none';
+  var existing=document.getElementById('banned-screen');if(existing)existing.remove();
+  var screen=document.createElement('div');screen.id='banned-screen';screen.className='banned-screen';
+  screen.innerHTML='<div style="font-size:4rem;margin-bottom:16px">🔨</div>'
+    +'<h1>You have been banned</h1>'
+    +'<p style="margin-bottom:12px">Your account has been suspended from Chirper by a moderator.</p>'
+    +(u.banReason?'<div class="ban-reason-pill">Reason: '+san(u.banReason)+'</div>':'')
+    +'<button class="btn btn-o" style="margin-top:24px" onclick="DB.clearSession();location.reload()">Return to Login</button>';
+  document.body.appendChild(screen);
+}
+
+function openBanModal(targetId){
+  var users=DB.users();var tgt=users[targetId];if(!tgt)return;
+  _banTargetId=targetId;
+  document.getElementById('ban-modal-name').textContent=tgt.name+' (@'+tgt.username+')';
+  document.getElementById('ban-reason-inp').value='';
+  document.getElementById('ban-modal').style.display='flex';
+  setTimeout(function(){document.getElementById('ban-reason-inp').focus();},50);
+}
+
+window.confirmBan=function(){
+  if(!_banTargetId)return;
+  var reason=document.getElementById('ban-reason-inp').value.trim();
+  var users=DB.users();var tgt=users[_banTargetId];if(!tgt)return;
+  tgt.banned=true;tgt.banReason=reason||'';tgt.bannedBy=CU.id;tgt.bannedAt=Date.now();
+  DB.setUsers(users);
+  document.getElementById('ban-modal').style.display='none';
+  _banTargetId=null;
+  toast('🔨 @'+tgt.username+' has been banned.');
+  renderModPanel();
+};
+
+function unbanUser(targetId){
+  var users=DB.users();var tgt=users[targetId];if(!tgt)return;
+  tgt.banned=false;tgt.banReason='';tgt.bannedBy=null;tgt.bannedAt=null;
+  DB.setUsers(users);
+  toast('✅ @'+tgt.username+' has been unbanned.');
+  renderModPanel();
+}
+
+function renderModPanel(){
+  var users=DB.users();var el=document.getElementById('modpanel-list');el.innerHTML='';
+  var sorted=Object.values(users).filter(function(u){return u.username.toLowerCase()!=='potus';}).sort(function(a,b){
+    // Banned users first
+    if(a.banned&&!b.banned)return -1;if(!a.banned&&b.banned)return 1;
+    return a.name.localeCompare(b.name);
+  });
+
+  // Section: currently banned
+  var bannedUsers=sorted.filter(function(u){return u.banned;});
+  var activeUsers=sorted.filter(function(u){return !u.banned;});
+
+  if(bannedUsers.length){
+    var bh=document.createElement('div');bh.style.cssText='padding:10px 20px;font-size:.78rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--danger);border-bottom:1px solid var(--border);background:rgba(232,85,85,.05)';bh.textContent='Currently Banned ('+bannedUsers.length+')';el.appendChild(bh);
+    bannedUsers.forEach(function(u){el.appendChild(buildModRow(u,users));});
+  }
+
+  var ah=document.createElement('div');ah.style.cssText='padding:10px 20px;font-size:.78rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text3);border-bottom:1px solid var(--border)';ah.textContent='All Users ('+activeUsers.length+')';el.appendChild(ah);
+  activeUsers.forEach(function(u){el.appendChild(buildModRow(u,users));});
+}
+
+function buildModRow(u,users){
+  var bannedBy=u.bannedBy?users[u.bannedBy]:null;
+  var row=document.createElement('div');row.className='admin-row';
+  if(u.banned)row.style.background='rgba(232,85,85,.04)';
+  row.appendChild(mkAv(u,'sm'));
+  var info=document.createElement('div');info.style.flex='1';info.style.minWidth='0';
+  var nameHtml='<div style="font-weight:600;display:flex;align-items:center;gap:6px;flex-wrap:wrap">'
+    +san(u.name)
+    +(u.verified?VBADGE:'')
+    +(u.modBadge?MBADGE:'')
+    +(u.banned?'<span class="ban-badge">🔨 Banned</span>':'')
+    +'</div>'
+    +'<div style="font-size:.82rem;color:var(--text2)">@'+san(u.username)+'</div>';
+  if(u.banned){
+    nameHtml+='<div style="font-size:.78rem;color:var(--text3);margin-top:2px">';
+    if(u.banReason)nameHtml+='Reason: '+san(u.banReason)+' · ';
+    if(bannedBy)nameHtml+='By: '+san(bannedBy.name)+' · ';
+    if(u.bannedAt)nameHtml+=timeAgo(u.bannedAt)+' ago';
+    nameHtml+='</div>';
+  }
+  info.innerHTML=nameHtml;row.appendChild(info);
+  // Don't allow banning self, POTUS, or other mods (unless you're POTUS)
+  var isPotus=CU.username.toLowerCase()==='potus';
+  var canAct=u.id!==CU.id&&(isPotus||(u.role!=='mod'&&!u.modBadge));
+  if(canAct){
+    if(u.banned){
+      var unbanBtn=document.createElement('button');unbanBtn.className='btn btn-s btn-o';unbanBtn.textContent='Unban';
+      unbanBtn.addEventListener('click',function(){unbanUser(u.id);});row.appendChild(unbanBtn);
+    } else {
+      var banBtn=document.createElement('button');banBtn.className='btn btn-s btn-danger';banBtn.textContent='🔨 Ban';
+      banBtn.addEventListener('click',function(){openBanModal(u.id);});row.appendChild(banBtn);
+    }
+  } else if(u.id===CU.id){
+    var self=document.createElement('span');self.style.cssText='font-size:.78rem;color:var(--text3);padding:0 8px';self.textContent='(you)';row.appendChild(self);
+  }
+  return row;
+}
+
 // ══ ADMIN ══
 function renderAdmin(){
   var users=DB.users();var el=document.getElementById('admin-list');el.innerHTML='';
@@ -1435,7 +1630,7 @@ function renderAdmin(){
     var row=document.createElement('div');row.className='admin-row';
     row.appendChild(mkAv(u,'sm'));
     var info=document.createElement('div');info.style.flex='1';
-    info.innerHTML='<div style="font-weight:600;display:flex;align-items:center;gap:4px">'+san(u.name)+(u.verified?VBADGE:'')+(u.modBadge?MBADGE:'')+'</div><div style="font-size:.82rem;color:var(--text2)">@'+san(u.username)+'</div>';
+    info.innerHTML='<div style="font-weight:600;display:flex;align-items:center;gap:4px">'+san(u.name)+(u.verified?VBADGE:'')+(u.modBadge?MBADGE:'')+(u.banned?'<span class="ban-badge">🔨</span>':'')+'</div><div style="font-size:.82rem;color:var(--text2)">@'+san(u.username)+'</div>';
     row.appendChild(info);
     var btn=document.createElement('button');btn.className='btn btn-s '+(u.verified?'btn-fg':'btn-f');btn.textContent=u.verified?'Unverify':'Verify';
     btn.addEventListener('click',function(){var us=DB.users();us[u.id].verified=!us[u.id].verified;DB.setUsers(us);renderAdmin();toast((us[u.id].verified?'Verified':'Unverified')+' @'+u.username);});
