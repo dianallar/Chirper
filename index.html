@@ -412,8 +412,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--fb);min-height:100
 
 <script>
 // ══ DATA ══
-var MAX_TWEETS_STORED = 400; // cap to avoid quota
-// Optional Firebase config: set window.CHIRPER_FIREBASE in firebase-config.js.
+var MAX_TWEETS_STORED = 1500;
 var FIREBASE_CONF = window.CHIRPER_FIREBASE || null;
 var dbCache = {};
 var remoteSaveTimer = null;
@@ -421,21 +420,29 @@ var DB = {
   mode:'local',
   firebaseReady:false,
   fs:null,
+  lastSaveTime:0,
   init:async function(){
     var localCache = DB._loadLocalCache();
     dbCache = localCache;
-    if(!FIREBASE_CONF||!window.firebase){return;}
+    if(!FIREBASE_CONF||!window.firebase){
+      console.log('Firebase not configured, using local storage only.');
+      return;
+    }
     try{
       var app=firebase.apps.length?firebase.app():firebase.initializeApp(FIREBASE_CONF);
       DB.fs=app.firestore();
       DB.firebaseReady=true;
       DB.mode='firebase';
+      console.log('Firebase initialized.');
+      
       var snap=await DB.fs.collection('chirper').doc('state').get();
       if(snap.exists){
         dbCache=snap.data().payload||{};
+        console.log('Loaded data from Firebase.');
       } else if(Object.keys(localCache).length){
         dbCache=localCache;
         await DB.fs.collection('chirper').doc('state').set({payload:dbCache,updatedAt:Date.now()});
+        console.log('Migrated local data to Firebase.');
       } else {
         dbCache={};
       }
@@ -468,20 +475,47 @@ var DB = {
     if(!DB.firebaseReady||!DB.fs)return;
     clearTimeout(remoteSaveTimer);
     remoteSaveTimer=setTimeout(async function(){
-      try{await DB.fs.collection('chirper').doc('state').set({payload:dbCache,updatedAt:Date.now()});}
-      catch(e){console.warn('Firebase save failed.',e);}
-    },250);
+      try{
+        await DB.fs.collection('chirper').doc('state').set({payload:dbCache,updatedAt:Date.now()},{merge:false});
+        DB.lastSaveTime=Date.now();
+        console.log('Data saved to Firebase.');
+      }
+      catch(e){console.error('Firebase save failed.',e);}
+    },500); // Increased from 250ms to 500ms for stability
   },
-  g:function(k){return Object.prototype.hasOwnProperty.call(dbCache,k)?dbCache[k]:null;},
+  g:function(k){
+    var val=Object.prototype.hasOwnProperty.call(dbCache,k)?dbCache[k]:null;
+    return val;
+  },
   s:function(k,v){
     dbCache[k]=v;
-    if(DB.mode==='local'){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}}
+    if(DB.mode==='local'){
+      try{localStorage.setItem(k,JSON.stringify(v));}catch(e){
+        console.error('localStorage quota exceeded:',e);
+        // If quota is exceeded, warn user
+        if(e.name==='QuotaExceededError'){
+          console.warn('Storage quota exceeded. Clearing old data.');
+          DB._trimOldData();
+          try{localStorage.setItem(k,JSON.stringify(v));}catch(e2){
+            console.error('Still cannot save:',e2);
+          }
+        }
+      }
+    }
     DB._queueRemoteSave();
   },
   d:function(k){
     delete dbCache[k];
     if(DB.mode==='local'){localStorage.removeItem(k);}
     DB._queueRemoteSave();
+  },
+  // Clear old tweets to prevent quota issues
+  _trimOldData:function(){
+    var tweets=DB.tweets();
+    if(tweets.length>200){
+      tweets=tweets.slice(0,200);
+      DB.setTweets(tweets);
+    }
   },
   users:function(){return DB.g('ch_users')||{};},
   setUsers:function(u){DB.s('ch_users',u);},
@@ -495,13 +529,13 @@ var DB = {
   notifs:function(uid){return DB.g('ch_nf_'+uid)||[];},
   pushNotif:function(uid,n){var a=DB.notifs(uid);a.unshift(Object.assign({id:uid_gen(),ts:Date.now()},n));DB.s('ch_nf_'+uid,a.slice(0,60));},
   session:function(){
-    var uid=localStorage.getItem('ch_sess');
+    var uid=sessionStorage.getItem('ch_sess'); // FIXED: Changed from localStorage to sessionStorage
     return uid||null;
   },
-  setSession:function(uid){localStorage.setItem('ch_sess',uid);},
-  clearSession:function(){localStorage.removeItem('ch_sess');}
+  setSession:function(uid){sessionStorage.setItem('ch_sess',uid);}, // FIXED: Changed from localStorage to sessionStorage
+  clearSession:function(){sessionStorage.removeItem('ch_sess');}, // FIXED: Changed from localStorage to sessionStorage
 };
-
+  
 var CU = null; // current user
 var navHistory = [];
 var cropState = {};
