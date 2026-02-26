@@ -230,18 +230,19 @@ body{background:var(--bg);color:var(--text);font-family:var(--fb);min-height:100
       <button class="atab" onclick="switchTab('register')">Sign Up</button>
     </div>
     <div id="login-form">
-      <div class="fg"><label>Username</label><input type="text" id="lu" placeholder="@username"/></div>
-      <div class="fg"><label>Password</label><input type="password" id="lp" placeholder="••••••••"/></div>
-      <div class="errmsg" id="lerr"></div>
-      <button class="btn btn-p" onclick="doLogin()">Log In</button>
+      <form onsubmit="event.preventDefault(); doLogin();">
+        <div class="fg"><label>Username</label><input type="text" id="lu" placeholder="@username"/></div>
+        <div class="fg"><label>Password</label><input type="password" id="lp" placeholder="••••••••"/></div>
+        <div class="errmsg" id="lerr"></div>
+        <button type="submit" class="btn btn-p">Log In</button>
+      </form>
     </div>
     <div id="register-form" style="display:none">
-      <div class="fg"><label>Display Name</label><input type="text" id="rn" placeholder="Your Name"/></div>
-      <div class="fg"><label>Username</label><input type="text" id="ru" placeholder="no spaces, no @"/></div>
-      <div class="fg"><label>Mod invite code <span style="text-transform:none;font-weight:400;font-size:.75rem">(optional)</span></label><input type="text" id="rmod" placeholder="Paste code from POTUS admin"/></div>
-      <div class="fg"><label>Password</label><input type="password" id="rp" placeholder="••••••••"/></div>
-      <div class="fg"><label>Bio <span style="text-transform:none;font-weight:400;font-size:.75rem">(optional)</span></label><textarea id="rb" placeholder="Tell the state who you are…"></textarea></div>
-      <div class="fg">
+    <div class="fg"><label>Display Name</label><input type="text" id="rn" placeholder="Your Name"/></div>
+    <div class="fg"><label>Username</label><input type="text" id="ru" placeholder="no spaces, no @"/></div>
+    <div class="fg"><label>Mod invite code <span style="text-transform:none;font-weight:400;font-size:.75rem">(optional)</span></label><input type="text" id="rmod" placeholder="Paste code from POTUS"/></div>
+    <div class="fg"><label>Password</label><input type="password" id="rp" placeholder="••••••••"/></div>
+    <div class="fg"><label>Bio <span style="text-transform:none;font-weight:400;font-size:.75rem">(optional)</span></label><textarea id="rb" placeholder="Tell the state who you are…"></textarea></div>      <div class="fg">
         <label>Profile Picture <span style="text-transform:none;font-weight:400;font-size:.75rem">(optional)</span></label>
         <div style="display:flex;align-items:center;gap:12px;margin-top:6px">
           <div class="av-wrap" id="rpfp-wrap"><div class="av" id="rpfp-prev">?</div><div class="av-ov">📷</div></div>
@@ -961,8 +962,16 @@ function toggleBlock(targetId,afterFn){
   toast(idx>-1?'Unblocked @'+tgt.username:'Blocked @'+tgt.username);
   if(afterFn)afterFn();
 }
-function isBlocked(uid){var me=DB.users()[CU.id];return (me.blocked||[]).indexOf(uid)>-1;}
-function hasBlockedMe(uid){var other=DB.users()[uid];return (other.blocked||[]).indexOf(CU.id)>-1;}
+
+window.isBlocked=function(uid){
+  var me=DB.users()[CU.id];
+  return me&&(me.blocked||[]).indexOf(uid)>-1?true:false;
+};
+
+window.hasBlockedMe=function(uid){
+  var other=DB.users()[uid];
+  return other&&other.blocked?(other.blocked||[]).indexOf(CU.id)>-1:false;
+};
 
 // ══ PROFILE (updated to prevent viewing blocked profiles) ══
 function openProfile(uid){
@@ -1141,11 +1150,16 @@ function buildCard(tweet,users,afterFn,clickable){
 }
 // ══ HOME FEED ══
 function renderFeed(){
-  var users=DB.users();var me=users[CU.id];var blocked=(me.blocked||[]).concat([]);
+  var users=DB.users();var me=users[CU.id];
+  if(!me){console.error('Current user not found');return;}
+  var blocked=(me.blocked||[]).concat([]);
+  
   var allVisible=DB.tweets().filter(function(t){
     var aid=t.retweetOf?t.retweetAuthorId:t.authorId;
-    if(blocked.indexOf(aid)>-1||hasBlockedMe(aid))return false;
-    var tAuthor=users[aid];if(tAuthor&&tAuthor.banned)return false; // hide banned users' posts
+    var author=users[aid];
+    // Skip tweets from authors that don't exist, are banned, or are blocked
+    if(!author||author.banned){return false;}
+    if(blocked.indexOf(aid)>-1||window.hasBlockedMe(aid)){return false;}
     return t.authorId===me.id||me.following.indexOf(t.authorId)>-1;
   });
   allVisible.sort(function(a,b){return b.ts-a.ts;});
